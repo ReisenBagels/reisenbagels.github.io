@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Generative Video Art Playground by Bagels</title>
+<style>
+html,body { margin:0; padding:0; width:100%; height:100%; background:black; overflow:hidden; color:#0f0; font-family:monospace; }
+#menu { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:black; z-index:20; }
+#panel { border:1px solid #0f0; padding:20px; width:400px; text-align:center; background:rgba(0,0,0,0.9);}
+input,select,button,textarea,a { width:100%; margin:4px 0; background:black; color:#0f0; border:1px solid #000; font-family:monospace; text-decoration:none; }
+textarea{ height:80px; }
+button { cursor:pointer; }
+#back { position:fixed; top:10px; left:10px; display:none; z-index:25; }
+#seekContainer { position:fixed; top:50px; left:10px; display:none; z-index:25; width:300px; }
+canvas { position:fixed; top:0; left:0; z-index:1; }
+.menuSection { margin-bottom:15px; }
+.menuSection ul { list-style:disc; padding-left:20px; text-align:left; margin:5px 0; }
+</style>
+</head>
+<body>
+
+<div id="menu">
+  <div id="panel">
+
+    <!-- Logo & Title -->
+<div class="menuSection">
+  <img src="https://i.ibb.co/svCy4nGm/reisen-udongein-inaba-touhou-drawn-by-you-noanoamoemoe-sample-bdb364f8127f9917ab4506de79b3392d-re.png" 
+       alt="Reisen Logo" 
+       style="width:80px; display:block; margin:0 auto 10px; border-radius:8px;">
+  <h2>Bagels Restaurant</h2>
+</div>
+
+
+    <!-- Hotlinks as bulletpoints -->
+    <div class="menuSection">
+      <ul>
+        <li><a href="https://reisenbagels.tiddlyhost.com/" target="_blank">Hold My Glass Logs</a></li>
+        <li><a href="http://discord.gg/SNRWuKwSbU" target="_blank">Hold My Glass Discord</a></li>
+        <li><a href="https://discord.gg/PmQt6mK" target="_blank">Reisen Gang Discord</a></li>
+        <li><a href="https://discord.gg/fumofumo" target="_blank">Fumo Discord</a></li>
+      </ul>
+    </div>
+
+    <!-- Video Options -->
+    <div class="menuSection">
+      <select id="mode">
+        <option value="camera">Camera</option>
+        <option value="file">Local Video</option>
+      </select>
+      <input type="file" id="file" accept="video/*">
+      <select id="layout">
+        <option value="mosaic">Mosaic</option>
+        <option value="zoetrope">Zoetrope</option>
+        <option value="radial">Radial</option>
+      </select>
+      <label>Tile Width</label><input type="range" id="tileWidth" min="10" max="320" value="160">
+      <label>Tile Height</label><input type="range" id="tileHeight" min="10" max="240" value="120">
+      <label>Speed / Tiles per Frame</label><input type="range" id="speed" min="1" max="60" value="10">
+      <label>Zoetrope Direction</label>
+      <select id="direction">
+        <option value="top_right">Top Left → Right</option>
+        <option value="top_left">Top Right → Left</option>
+        <option value="left_down">Top Left → Down</option>
+        <option value="right_down">Top Right → Down</option>
+        <option value="bottom_left">Bottom Left → Up</option>
+        <option value="bottom_right">Bottom Right → Left</option>
+        <option value="left_up">Bottom Left → Up</option>
+        <option value="right_up">Bottom Right → Up</option>
+      </select>
+      <label><input type="checkbox" id="disableStrobe"> Disable Strobe</label>
+      <textarea id="shader" placeholder="Optional filter code (ctx.filter syntax)"></textarea>
+      <label><input type="checkbox" id="magicParticles"> Magic Particles</label>
+      <select id="magicShape">
+        <option value="square">Square</option>
+        <option value="circle">Circle</option>
+        <option value="triangle">Triangle</option>
+      </select>
+      <input type="color" id="magicColor" value="#0f0">
+      <select id="magicLocation">
+        <option value="random">Random</option>
+        <option value="top_left">Top Left</option>
+        <option value="top_right">Top Right</option>
+        <option value="bottom_left">Bottom Left</option>
+        <option value="bottom_right">Bottom Right</option>
+      </select>
+      <label><input type="checkbox" id="mouseParticles"> Mouse-Controlled Particles</label>
+      <label id="radialSizeLabel" style="display:none">Radial Size</label>
+      <input type="range" id="radialSize" min="50" max="1000" value="300" style="display:none">
+      <button id="play">▶ PLAY</button>
+      <div id="error"></div>
+    </div>
+
+  </div>
+</div>
+
+<button id="back">← Back</button>
+<div id="seekContainer">
+  <input type="range" id="seekbar" min="0" max="100" value="0">
+  <label><input type="checkbox" id="repeat"> Repeat</label>
+</div>
+
+<canvas id="canvas"></canvas>
+<video id="video" playsinline></video>
+
+<script>
+// JS remains mostly unchanged from your base
+const menu=document.getElementById('menu');
+const mode=document.getElementById('mode');
+const file=document.getElementById('file');
+const layoutInput=document.getElementById('layout');
+const tileWidthInput=document.getElementById('tileWidth');
+const tileHeightInput=document.getElementById('tileHeight');
+const speedInput=document.getElementById('speed');
+const shaderInput=document.getElementById('shader');
+const playBtn=document.getElementById('play');
+const backBtn=document.getElementById('back');
+const disableStrobe=document.getElementById('disableStrobe');
+const directionInput=document.getElementById('direction');
+const seekContainer=document.getElementById('seekContainer');
+const seekbar=document.getElementById('seekbar');
+const repeatCheckbox=document.getElementById('repeat');
+const magicParticlesToggle=document.getElementById('magicParticles');
+const magicShapeSelect=document.getElementById('magicShape');
+const magicColorInput=document.getElementById('magicColor');
+const magicLocationSelect=document.getElementById('magicLocation');
+const mouseParticlesToggle=document.getElementById('mouseParticles');
+const radialSizeInput=document.getElementById('radialSize');
+const radialSizeLabel=document.getElementById('radialSizeLabel');
+
+const canvas=document.getElementById('canvas');
+const ctx=canvas.getContext('2d');
+const video=document.getElementById('video');
+
+let tiles=[],cols=0,rows=0,tx=0,ty=0,tileQueue=[],queueIndex=0,particles=[];
+let lastTimestamp=0;
+let audioCtx, analyser, dataArray;
+let mouseX=0, mouseY=0;
+
+canvas.width=window.innerWidth;
+canvas.height=window.innerHeight;
+window.onresize=()=>{canvas.width=window.innerWidth; canvas.height=window.innerHeight; buildTiles();};
+canvas.onmousemove=(e)=>{mouseX=e.clientX; mouseY=e.clientY;};
+
+layoutInput.onchange=()=>{
+  if(layoutInput.value==='radial'){
+    radialSize.style.display='block'; radialSizeLabel.style.display='block';
+    magicParticlesToggle.checked=false;
+  } else {
+    radialSize.style.display='none'; radialSizeLabel.style.display='none';
+  }
+  buildTiles();
+};
+
+function buildTiles(){ tiles=[]; const tw=parseInt(tileWidthInput.value), th=parseInt(tileHeightInput.value); cols=Math.ceil(canvas.width/tw); rows=Math.ceil(canvas.height/th); for(let y=0;y<rows;y++) for(let x=0;x<cols;x++) tiles.push({x,y,w:tw,h:th}); tx=0; ty=0; buildTileQueue(); }
+function buildTileQueue(){ tileQueue=[]; for(let y=0;y<rows;y++){ let row=[]; for(let x=0;x<cols;x++) row.push({x:x,y:y}); if(layoutInput.value==='mosaic') for(let i=row.length-1;i>0;i--){ let j=Math.floor(Math.random()*(i+1)); [row[i],row[j]]=[row[j],row[i]];} tileQueue.push(...row);} queueIndex=0; }
+function nextTile(){ if(layoutInput.value==='mosaic'){ queueIndex++; if(queueIndex>=tileQueue.length) queueIndex=0; return tileQueue[queueIndex]; } switch(directionInput.value){ case 'top_right': tx++; if(tx>=cols){tx=0; ty++; if(ty>=rows) ty=0;} break; case 'top_left': tx--; if(tx<0){tx=cols-1; ty++; if(ty>=rows) ty=0;} break; case 'left_down': ty++; if(ty>=rows){ty=0; tx--; if(tx<0) tx=cols-1;} break; case 'right_down': ty++; if(ty>=rows){ty=0; tx++; if(tx>=cols) tx=0;} break; case 'bottom_left': tx--; if(tx<0){tx=cols-1; ty--; if(ty<0) ty=rows-1;} break; case 'bottom_right': tx++; if(tx>=cols){tx=0; ty--; if(ty<0) ty=rows-1;} break; case 'left_up': ty--; if(ty<0){ty=rows-1; tx--; if(tx<0) tx=cols-1;} break; case 'right_up': ty--; if(ty<0){ty=rows-1; tx++; if(tx>=cols) tx=0;} break;} return {x:tx,y:ty}; }
+
+function setupAudio(){ audioCtx=new (window.AudioContext||window.webkitAudioContext)(); const source=audioCtx.createMediaElementSource(video); analyser=audioCtx.createAnalyser(); source.connect(analyser); analyser.connect(audioCtx.destination); analyser.fftSize=256; dataArray=new Uint8Array(analyser.frequencyBinCount); }
+
+function updateParticles(){ for(let i=particles.length-1;i>=0;i--){ let p=particles[i]; p.x+=p.vx; p.y+=p.vy; p.life-=1; if(p.life<=0) particles.splice(i,1); } }
+function spawnParticles(x,y,intensity){ if(!magicParticlesToggle.checked) return; const shape=magicShapeSelect.value, color=magicColorInput.value; for(let i=0;i<Math.ceil(intensity*5);i++) particles.push({x:x+Math.random()*10-5,y:y+Math.random()*10-5,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:20+Math.random()*20,shape,color}); }
+function spawnMouseParticles(){ if(!mouseParticlesToggle.checked) return; particles.push({x:mouseX,y:mouseY,vx:(Math.random()-0.5)*2,vy:(Math.random()-0.5)*2,life:20+Math.random()*20,shape:magicShapeSelect.value,color:magicColorInput.value}); }
+function drawParticles(){ particles.forEach(p=>{ ctx.fillStyle=p.color; switch(p.shape){ case 'square': ctx.fillRect(p.x,p.y,2,2); break; case 'circle': ctx.beginPath(); ctx.arc(p.x,p.y,2,0,Math.PI*2); ctx.fill(); break; case 'triangle': ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(p.x+2,p.y); ctx.lineTo(p.x+1,p.y-2); ctx.fill(); break; } }); }
+
+function drawLoop(timestamp){ if(!lastTimestamp) lastTimestamp=timestamp; const delta=timestamp-lastTimestamp; lastTimestamp=timestamp; const tw=parseInt(tileWidthInput.value), th=parseInt(tileHeightInput.value), speed=parseInt(speedInput.value); let tilesToDraw=Math.ceil(speed*delta/(1000/60)); if(video.readyState>=2){ if(analyser) analyser.getByteFrequencyData(dataArray); const audioLevel = analyser ? Math.max(...dataArray)/255 : 1; for(let i=0;i<tilesToDraw;i++){ const tile=nextTile(); let vx=tile.x*tw, vy=tile.y*th; if(layoutInput.value==='radial'){ const centerX=canvas.width/2, centerY=canvas.height/2; const radius=parseInt(radialSizeInput.value); const idx=tile.y*cols+tile.x; const angle=(idx/tiles.length)*Math.PI*2; vx=centerX+Math.cos(angle+timestamp/500)*radius; vy=centerY+Math.sin(angle+timestamp/500)*radius; } ctx.filter=shaderInput.value||'none'; ctx.globalAlpha=1; ctx.drawImage(video,vx,vy,tw*(1+0.2*audioLevel),th*(1+0.2*audioLevel)); spawnParticles(vx+tw/2,vy+th/2,audioLevel); } spawnMouseParticles(); drawParticles(); updateParticles(); if(video.duration) seekbar.value=(video.currentTime/video.duration*100); } requestAnimationFrame(drawLoop); }
+
+seekbar.oninput=()=>{if(video.duration) video.currentTime=seekbar.value/100*video.duration;};
+video.onended=()=>{if(repeatCheckbox.checked) video.currentTime=0; else video.pause();};
+
+playBtn.onclick=async()=>{
+  buildTiles();
+  if(mode.value==='camera'){
+    const s=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+    video.srcObject=s;
+    video.play();
+  } else if(mode.value==='file'){
+    const f=file.files[0]; if(!f) return alert("Select a video file!");
+    video.src=URL.createObjectURL(f);
+    video.play();
+  }
+  menu.style.display='none'; backBtn.style.display='block'; seekContainer.style.display='block';
+  setupAudio();
+  drawLoop();
+};
+
+backBtn.onclick=()=>{
+  if(video.srcObject) video.srcObject.getTracks().forEach(t=>t.stop());
+  video.pause(); video.src=''; menu.style.display='flex'; backBtn.style.display='none'; seekContainer.style.display='none';
+  particles=[];
+};
+</script>
+</body>
+</html>
