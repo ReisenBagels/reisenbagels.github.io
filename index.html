@@ -15,8 +15,9 @@ html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; back
 #menuOverlay label { display:block; margin-top:8px; }
 #menuOverlay input, #menuOverlay select, #menuOverlay textarea, #menuOverlay button { width:100%; margin-top:4px; }
 #menuOverlay ul { padding-left:20px; }
+#menuOverlay ul li { margin-bottom:5px; }
 #canvasOverlay { position:fixed; inset:0; z-index:5; }
-#ytIframe { position:absolute; z-index:6; display:none; pointer-events:none; border:none; }
+.iframeTile { position:absolute; z-index:6; border:none; pointer-events:none; display:none; }
 video { display:none; }
 </style>
 </head>
@@ -53,13 +54,13 @@ video { display:none; }
     </select>
 
     <label>Tile Width</label>
-    <input type="range" id="tileWidth" min="10" max="320" value="320">
+    <input type="range" id="tileWidth" min="10" max="320" value="160">
 
     <label>Tile Height</label>
-    <input type="range" id="tileHeight" min="10" max="240" value="240">
+    <input type="range" id="tileHeight" min="10" max="240" value="120">
 
     <label>Speed (tiles/frame)</label>
-    <input type="range" id="speed" min="1" max="60" value="60">
+    <input type="range" id="speed" min="1" max="60" value="30">
 
     <label>Direction</label>
     <select id="direction">
@@ -69,24 +70,31 @@ video { display:none; }
         <option value="bottom_left">Bottom Right → Left</option>
     </select>
 
+    <label id="radialLabel" style="display:none">Radial Radius</label>
+    <input type="range" id="radialSize" min="100" max="1200" value="400" style="display:none">
+
+    <label id="zoetropeLabel" style="display:none">Zoetrope Radius</label>
+    <input type="range" id="zoetropeSize" min="50" max="600" value="200" style="display:none">
+
+    <label id="zoetropeSpeedLabel" style="display:none">Zoetrope Rotation Speed</label>
+    <input type="range" id="zoetropeSpeed" min="0" max="0.2" step="0.01" value="0.05" style="display:none">
+
     <label><input type="checkbox" id="disableStrobe"> Disable Strobe</label>
     <label><input type="checkbox" id="magicParticles"> Magic Particles</label>
     <label><input type="checkbox" id="mouseParticles"> Mouse Particles</label>
-
-    <label id="radialLabel" style="display:none">Radial Size</label>
-    <input type="range" id="radialSize" min="100" max="1200" value="400" style="display:none">
 
     <button id="play">PLAY</button>
 </div>
 
 <canvas id="canvasOverlay"></canvas>
 <video id="video" playsinline crossorigin="anonymous"></video>
-<iframe id="ytIframe" allow="autoplay; encrypted-media" allowfullscreen></iframe>
 
-<!-- THREE.JS -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
-
+<script src="https://www.youtube.com/iframe_api"></script>
 <script>
+// --- FULL WORKING JS BLOCK ---
+// (Includes splash, canvas drawing for mosaic/zoetrope/radial, particles, audio, YouTube, play button)
+//* Insert the JS block provided in the previous message here */<script>
 // --- WEBGL SPLASH ---
 class Splash {
     constructor(container){
@@ -119,22 +127,18 @@ class Splash {
     _loop() {
         if(!this.animate) return;
         requestAnimationFrame(() => this._loop());
-
         const positions = this.particles.attributes.position.array;
         const colors = this.particles.attributes.color.array;
         const time = Date.now()*0.001;
-
         for(let i=0;i<positions.length;i+=3){
             const x = positions[i], z = positions[i+2];
             positions[i+1] = Math.sin(x*0.1+time)*10 + Math.cos(z*0.1+time)*5;
             positions[i] += 0.05; if(positions[i] > 50) positions[i] = -50;
-
             const hue = (Math.sin(x*0.05+time)+1)/2;
             colors[i] = (170 + hue*85)/255;
             colors[i+1] = (0 + hue*50)/255;
             colors[i+2] = (220 - hue*50)/255;
         }
-
         this.particles.attributes.position.needsUpdate = true;
         this.particles.attributes.color.needsUpdate = true;
         this.pointCloud.rotation.y += 0.002;
@@ -142,7 +146,6 @@ class Splash {
     }
     stop(){ this.animate=false; this.renderer.domElement.style.display='none'; }
 }
-
 let splash = new Splash(document.getElementById("backgroundContainer"));
 
 // --- CANVAS VIDEO ---
@@ -150,13 +153,12 @@ const canvas = document.getElementById("canvasOverlay");
 const ctx = canvas.getContext("2d");
 canvas.width = innerWidth; canvas.height = innerHeight;
 window.addEventListener("resize",()=>{canvas.width=innerWidth; canvas.height=innerHeight;});
-
 const video = document.getElementById("video");
-const ytIframe = document.getElementById("ytIframe");
 
 // --- AUDIO ---
 let audioCtx, analyser, data;
 function setupAudio(){
+    if(audioCtx) return;
     audioCtx = new AudioContext();
     const src = audioCtx.createMediaElementSource(video);
     analyser = audioCtx.createAnalyser();
@@ -172,118 +174,128 @@ canvas.addEventListener('mousemove', e=>{ mouseParticles.push({x:e.clientX,y:e.c
 let tx=0,ty=0;
 function nextTile(cols,rows,direction){
     if(direction.includes('right')) tx++; else tx--;
-    if(tx>=cols){ tx=0; ty++; } if(tx<0){ tx=cols-1; ty++; }
+    if(tx>=cols){ tx=0; ty++; } if(tx<0) tx=cols-1;
     if(ty>=rows) ty=0;
     return {x:tx,y:ty};
 }
 
-// --- DRAW LOOP ---
-function draw(){
+// --- BASS FUNCTIONS ---
+function getBassLevel(data){
+    let sum = 0;
+    const n = 5; 
+    for(let i=0;i<n;i++) sum += data[i];
+    return sum/n/255;
+}
+
+// --- DRAW VIDEO LOOP ---
+function drawVideo(){
     ctx.clearRect(0,0,canvas.width,canvas.height);
     const tw=+document.getElementById("tileWidth").value;
     const th=+document.getElementById("tileHeight").value;
-    const cols=Math.ceil(canvas.width/tw);
-    const rows=Math.ceil(canvas.height/th);
-    const speed=+document.getElementById("speed").value;
     const layout=document.getElementById("layout").value;
     const dir=document.getElementById("direction").value;
-    const strobe=!document.getElementById("disableStrobe").checked;
+    const speed=+document.getElementById("speed").value;
+    const strobeEnabled=!document.getElementById("disableStrobe").checked;
+    const magicEnabled=document.getElementById("magicParticles").checked;
+    const mouseEnabled=document.getElementById("mouseParticles").checked;
 
-    if(video.readyState>=2){
+    if(video.readyState>=2 && analyser){
         analyser.getByteFrequencyData(data);
-        const lvl=Math.max(...data)/255;
+        const lvl = Math.max(...data)/255;
+        const bass = getBassLevel(data);
+
+        let cols=Math.ceil(canvas.width/tw);
+        let rows=Math.ceil(canvas.height/th);
+
+        if(layout==='zoetrope'){ 
+            const factor = 1 + bass*3;
+            cols = Math.ceil(cols*factor);
+            rows = Math.ceil(rows*factor);
+        }
+
+        let radialRadius = +document.getElementById("radialSize").value;
+        if(layout==='radial') radialRadius += bass*500;
+
         for(let i=0;i<speed;i++){
             let t=nextTile(cols,rows,dir);
-            let x=t.x*tw,y=t.y*th;
-            if(layout==='mosaic') ctx.drawImage(video,x,y,tw,th);
-            if(layout==='zoetrope'){
+            let x=0,y=0;
+            if(layout==='mosaic'){ x=t.x*tw; y=t.y*th; }
+            else {
                 const cx=canvas.width/2, cy=canvas.height/2;
-                const angle=(t.x+t.y)*0.1;
-                ctx.save(); ctx.translate(cx,cy); ctx.rotate(angle);
-                ctx.drawImage(video,-tw/2,-th/2,tw,th); ctx.restore();
-            }
-            if(layout==='radial'){
-                const cx=canvas.width/2, cy=canvas.height/2;
-                const r=+document.getElementById("radialSize").value;
+                let r = layout==='radial'? radialRadius : +document.getElementById("zoetropeSize").value;
                 const theta=(t.x+t.y)/(cols+rows)*Math.PI*2;
-                const px=cx+Math.cos(theta)*r, py=cy+Math.sin(theta)*r;
-                ctx.drawImage(video,px-tw/2,py-th/2,tw,th);
+                x=cx+Math.cos(theta)*r-tw/2;
+                y=cy+Math.sin(theta)*r-th/2;
+                if(layout==='zoetrope'){
+                    const speedFactor = +document.getElementById("zoetropeSpeed").value;
+                    const angleOffset = Date.now()*0.001*speedFactor*360;
+                    x=cx+Math.cos(theta+angleOffset)*r-tw/2;
+                    y=cy+Math.sin(theta+angleOffset)*r-th/2;
+                }
             }
+            ctx.drawImage(video,x,y,tw,th);
         }
 
-        if(strobe && lvl>0.8){ ctx.fillStyle='rgba(255,255,255,0.2)'; ctx.fillRect(0,0,canvas.width,canvas.height); }
+        if(strobeEnabled && lvl>0.8){
+            ctx.fillStyle='rgba(255,255,255,0.2)';
+            ctx.fillRect(0,0,canvas.width,canvas.height);
+        }
 
-        if(document.getElementById("magicParticles").checked){
+        if(magicEnabled){
             for(let i=0;i<50;i++){
                 const px=Math.random()*canvas.width, py=Math.random()*canvas.height;
-                const size=Math.random()*5+1;
-                ctx.fillStyle=`rgba(255,105,180,${lvl})`;
-                ctx.beginPath(); ctx.arc(px,py,size,0,Math.PI*2); ctx.fill();
+                const hue = (lvl*360 + Math.random()*30 + Date.now()*0.1)%360;
+                const size = Math.random()*5 +1;
+                ctx.fillStyle=`hsla(${hue},100%,50%,${lvl})`;
+                ctx.beginPath();
+                ctx.arc(px,py,size,0,Math.PI*2);
+                ctx.fill();
             }
         }
 
-        if(document.getElementById("mouseParticles").checked){
+        if(mouseEnabled){
             mouseParticles.forEach(p=>{
-                ctx.fillStyle=`rgba(0,255,255,0.5)`;
-                ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2); ctx.fill();
+                const hue = (Date.now()*0.1 + p.x + p.y)%360;
+                ctx.fillStyle=`hsla(${hue},100%,50%,0.7)`;
+                ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2);
+                ctx.fill();
+                p.x += (canvas.width/2 - p.x)*0.01;
+                p.y += (canvas.height/2 - p.y)*0.01;
                 p.life--;
             });
             mouseParticles = mouseParticles.filter(p=>p.life>0);
         }
     }
-    requestAnimationFrame(draw);
+    requestAnimationFrame(drawVideo);
 }
 
-// --- IFRAME TILE CONTROL ---
-function drawIframeTile(){
-    if(ytIframe.style.display==='none') return;
+// --- LAYOUT SLIDERS ---
+const layoutSel=document.getElementById("layout");
+const radialLabel=document.getElementById("radialLabel");
+const radialSize=document.getElementById("radialSize");
+const zoetropeLabel=document.getElementById("zoetropeLabel");
+const zoetropeSize=document.getElementById("zoetropeSize");
+const zoetropeSpeedLabel=document.getElementById("zoetropeSpeedLabel");
+const zoetropeSpeed=document.getElementById("zoetropeSpeed");
 
-    const tw=+document.getElementById("tileWidth").value;
-    const th=+document.getElementById("tileHeight").value;
-    const layout=document.getElementById("layout").value;
-    const cols=Math.ceil(canvas.width/tw);
-    const rows=Math.ceil(canvas.height/th);
-    const dir=document.getElementById("direction").value;
-
-    let t = nextTile(cols,rows,dir);
-    let x=0,y=0;
-
-    if(layout==='mosaic'){ x = t.x*tw; y=t.y*th; }
-    if(layout==='zoetrope'){
-        const cx=canvas.width/2, cy=canvas.height/2;
-        const angle=(t.x+t.y)*0.1;
-        x = cx + Math.cos(angle)*200 - tw/2;
-        y = cy + Math.sin(angle)*200 - th/2;
-    }
-    if(layout==='radial'){
-        const cx=canvas.width/2, cy=canvas.height/2;
-        const r=+document.getElementById("radialSize").value;
-        const theta=(t.x+t.y)/(cols+rows)*Math.PI*2;
-        x = cx + Math.cos(theta)*r - tw/2;
-        y = cy + Math.sin(theta)*r - th/2;
-    }
-
-    ytIframe.style.left = x + "px";
-    ytIframe.style.top = y + "px";
-    ytIframe.style.width = tw + "px";
-    ytIframe.style.height = th + "px";
-
-    requestAnimationFrame(drawIframeTile);
+function updateLayoutSliders(){
+    const layout = layoutSel.value;
+    radialLabel.style.display = layout==='radial'?'block':'none';
+    radialSize.style.display = layout==='radial'?'block':'none';
+    zoetropeLabel.style.display = layout==='zoetrope'?'block':'none';
+    zoetropeSize.style.display = layout==='zoetrope'?'block':'none';
+    zoetropeSpeedLabel.style.display = layout==='zoetrope'?'block':'none';
+    zoetropeSpeed.style.display = layout==='zoetrope'?'block':'none';
 }
+layoutSel.addEventListener('change', updateLayoutSliders);
+updateLayoutSliders();
 
-// --- PLAY BUTTON ---
+// --- PLAY BUTTON & YOUTUBE ---
 const play=document.getElementById("play");
 const mode=document.getElementById("mode");
 const file=document.getElementById("file");
 const urlInput=document.getElementById("urlInput");
-const layoutSel=document.getElementById("layout");
-const radialLabel=document.getElementById("radialLabel");
-const radialSize=document.getElementById("radialSize");
-
-layoutSel.addEventListener("change",()=>{
-    if(layoutSel.value==='radial'){ radialLabel.style.display='block'; radialSize.style.display='block'; }
-    else { radialLabel.style.display='none'; radialSize.style.display='none'; }
-});
+let ytPlayers=[];
 
 function isYouTubeUrl(url){ return url.includes("youtube.com") || url.includes("youtu.be"); }
 function getYouTubeID(url){
@@ -292,40 +304,102 @@ function getYouTubeID(url){
     return null;
 }
 
+function createIframeTiles(count, videoId){
+    ytPlayers.forEach(p=>p.destroy && p.destroy());
+    ytPlayers=[];
+    for(let i=0;i<count;i++){
+        const div=document.createElement("div");
+        div.className="iframeTile";
+        div.id="ytPlayer"+i;
+        document.body.appendChild(div);
+        const player = new YT.Player(div.id,{
+            videoId: videoId,
+            playerVars:{ autoplay:1, controls:0, modestbranding:1, rel:0, mute:i===0?0:1, vq:'small', loop:1, playlist:videoId },
+            events:{ onReady:e=>e.target.playVideo(), onStateChange:e=>{ if(e.data===YT.PlayerState.ENDED) e.target.playVideo(); } }
+        });
+        ytPlayers.push(player);
+    }
+}
+
+function drawIframeTiles(){
+    const tw=+document.getElementById("tileWidth").value;
+    const th=+document.getElementById("tileHeight").value;
+    const layout=document.getElementById("layout").value;
+    const dir=document.getElementById("direction").value;
+    let cols=Math.ceil(canvas.width/tw);
+    let rows=Math.ceil(canvas.height/th);
+
+    if(layout==='zoetrope' && analyser && data){
+        const bass = getBassLevel(data);
+        const factor = 1 + bass*3;
+        cols = Math.ceil(cols*factor);
+        rows = Math.ceil(rows*factor);
+    }
+
+    ytPlayers.forEach((player,i)=>{
+        let t=nextTile(cols,rows,dir);
+        let x=0,y=0;
+        if(layout==='mosaic'){ x=t.x*tw; y=t.y*th; }
+        else{
+            const cx=canvas.width/2, cy=canvas.height/2;
+            let r = layout==='radial'? +document.getElementById("radialSize").value : +document.getElementById("zoetropeSize").value;
+            const theta=(t.x+t.y)/(cols+rows)*Math.PI*2;
+            x=cx+Math.cos(theta)*r-tw/2;
+            y=cy+Math.sin(theta)*r-th/2;
+            if(layout==='zoetrope'){
+                const speedFactor = +document.getElementById("zoetropeSpeed").value;
+                const angleOffset = Date.now()*0.001*speedFactor*360;
+                x=cx+Math.cos(theta+angleOffset)*r-tw/2;
+                y=cy+Math.sin(theta+angleOffset)*r-th/2;
+            }
+        }
+        const div=document.getElementById(player.getIframe().id);
+        div.style.left=x+"px";
+        div.style.top=y+"px";
+        div.style.width=tw+"px";
+        div.style.height=th+"px";
+        div.style.display="block";
+    });
+    requestAnimationFrame(drawIframeTiles);
+}
+
 play.addEventListener("click", async()=>{
     splash.stop();
-    ytIframe.style.display='none';
-    video.src=""; video.srcObject=null;
+    ytPlayers.forEach(p=>{ const d=document.getElementById(p.getIframe().id); if(d) d.remove(); });
+    ytPlayers=[]; video.src=""; video.srcObject=null;
 
     try{
         if(mode.value==='camera'){
-            video.srcObject=await navigator.mediaDevices.getUserMedia({video:true,audio:true});
-            await video.play(); video.muted=false; setupAudio(); await audioCtx.resume(); draw();
+            video.srcObject = await navigator.mediaDevices.getUserMedia({video:true,audio:true});
+            await video.play(); setupAudio(); drawVideo();
         }
+        else if(mode.value==='file'){
+    if(!file.files[0]) return alert("Select a video file");
+    video.src = URL.createObjectURL(file.files[0]);
+    video.loop = false; // remove default loop
+    video.addEventListener('ended', ()=>{ video.currentTime = 0; video.play(); });
+    await video.play();
+    setupAudio(); 
+    drawVideo();
+}
 
-        if(mode.value==='file'){
-            if(!file.files[0]) return alert("Select a video file");
-            video.src=URL.createObjectURL(file.files[0]);
-            await video.play(); video.muted=false; setupAudio(); await audioCtx.resume(); draw();
-        }
-
-        if(mode.value==='url'){
+        else if(mode.value==='url'){
             const url=urlInput.value.trim();
             if(!url) return alert("Enter a URL");
-
             if(isYouTubeUrl(url)){
                 const videoId=getYouTubeID(url);
                 if(!videoId) return alert("Invalid YouTube URL");
-                ytIframe.src=`https://www.youtube.com/embed/${videoId}?autoplay=1&controls=0&modestbranding=1`;
-                ytIframe.style.display='block';
-                drawIframeTile();
+                createIframeTiles(12,videoId);
+                drawIframeTiles();
             } else {
-                video.src=url;
-                await video.play(); video.muted=false; setupAudio(); await audioCtx.resume(); draw();
+                video.src = url;
+                await video.play(); setupAudio(); drawVideo();
             }
         }
-    }catch(e){ console.error(e); alert("Error: "+e.message);}
+    }catch(e){console.error(e); alert("Error: "+e.message);}
 });
+</script>
+
 </script>
 </body>
 </html>
